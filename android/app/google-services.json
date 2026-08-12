@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "752801573203",
+    "project_id": "selah-12065",
+    "storage_bucket": "selah-12065.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:752801573203:android:a80f5704540ed6a0df99a6",
+        "android_client_info": {
+          "package_name": "com.selah.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDKo8v2I4s7TRlTra5Vm0W7roktkXUQb7g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

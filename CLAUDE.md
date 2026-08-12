@@ -12,14 +12,15 @@ Flutter (iOS + Android) Christian Scripture companion. Users bring a real-life s
 Selah/
 └── selah/                      # the Flutter project — this file, run flutter commands here
     ├── lib/
-    ├── android/  ios/          # the only shipping platforms
-    ├── web/                    # scaffold only, not a target
-    ├── assets/images/          # selah_logo.png (not yet registered in pubspec)
+    ├── android/  ios/          # the only platforms
+    ├── assets/images/          # logo + splash source art (see below)
     ├── docs/                   # PRD (.docx)
     └── selah_scripture_companion/   # design reference: HTML + PNG per screen
 ```
 
-**Target platforms: iOS and Android only.** The `linux/`, `windows/`, and `macos/` folders were deleted and dropped from `.metadata`'s migration list. Do not re-add them, and don't pick packages for desktop compatibility. If a desktop target is ever needed: `fvm flutter create --platforms=macos .`
+**Target platforms: iOS and Android only.** The `linux/`, `windows/`, `macos/`, and `web/` folders were deleted and dropped from `.metadata`'s migration list — only `root`, `android`, and `ios` remain. Do not re-add them, and never choose a package for desktop or web compatibility. If a target is ever genuinely needed: `fvm flutter create --platforms=web .`
+
+A consequence worth knowing: `flutter run -d chrome` no longer works, so UI can only be previewed on a simulator/emulator or device. The design references in `selah_scripture_companion/` are plain HTML and open directly in a browser for side-by-side comparison.
 
 ## Toolchain — FVM
 
@@ -39,27 +40,58 @@ A bare `flutter` uses whatever the machine has globally, which will not match th
 
 Pinned to **Flutter 3.44.4** (Dart 3.12.2) because `pubspec.yaml` requires `sdk: ^3.12.2`. Anything below Flutter 3.44 fails `pub get`. VS Code is pointed at the pinned SDK via `.vscode/settings.json` (`dart.flutterSdkPath`).
 
+## Firebase
+
+Project **`selah-12065`**, apps registered under bundle ID **`com.selah.app`** (both platforms — set this in any new platform config, never `com.example.*`).
+
+| App | ID |
+|---|---|
+| android | `1:752801573203:android:a80f5704540ed6a0df99a6` |
+| ios | `1:752801573203:ios:e2a13c139fe60cdddf99a6` |
+
+`firestore.rules` enforces PRD §22: default deny, every allowance scoped to the owning uid, server-generated timestamps required, no cross-user read path, and no public read path at all (the Scripture corpus ships with the app rather than living in Firestore). Deploy with `firebase deploy --only firestore:rules`.
+
+Backend is live and verified: `(default)` Firestore database created, rules and the composite index **deployed**, anonymous sign-in **enabled** (confirmed by a real Identity Toolkit `signUp` returning `sign_in_provider: anonymous`).
+
+Note on `firestore.indexes.json`: only **composite** indexes belong there. Firestore maintains single-field indexes automatically and the API rejects declaring them (`400 this index is not necessary`), so plain `orderBy(createdAt DESC)` queries need no entry.
+
 ## Current state
 
-**Base structure complete** — `flutter analyze` clean, 3 shell smoke tests passing. Firebase is *not* yet configured (no `firebase_options.dart`), so nothing talks to a backend.
+**Milestone 1 complete** — `flutter analyze` clean, 3 shell smoke tests passing, Firebase initialised and silent anonymous auth wired.
 
 Built:
 - Full token layer (`app/theme/`) → light + dark `ThemeData` in `app/app_theme.dart`
 - `go_router` with a `StatefulShellRoute` for the four nav branches; conversation, reader, reflection, and prayer push over the shell
 - `app/app_shell.dart` — glassmorphic bottom nav
 - `core/` — constants, strings, sealed `AppException`, date utils, preferences service, shared widgets
+- `features/auth/data/` — `AuthDataSource` (owns `firebase_auth`; nothing above it imports FirebaseAuth) + `AuthRepository` exposing plain uid strings. Read the session via `currentUidProvider`, which throws rather than returning null so a Firestore path can never be built with a missing uid.
+- `bootstrap()` — prefs → `Firebase.initializeApp` → `ensureSignedIn()` → `runApp`. Sign-in failure is **deliberately non-fatal**: auth needs network, and an offline user must still reach saved Scriptures and reflections (§37), so the app starts anyway and retries next launch.
 - All nine screens exist and are navigable. **Onboarding and Appearance are fully functional** (both device-local). Home, Explore, Library, Profile, Conversation, Scripture detail, Reflection, and Prayer are structural scaffolds with placeholder content and `TODO(milestone-N)` markers where the real data goes.
 
-Next: Milestone 1 tail (Firebase init + silent anonymous auth in `bootstrap.dart`), then Milestone 2 (KJV corpus → search → reader).
+Next: **Milestone 2** — KJV corpus → search → reader. Nothing about it depends on Firebase.
 
 ### Deviations from the PRD's file list — keep or revisit deliberately
 
 - `app/theme/{app_colors,app_typography,app_spacing}.dart` — the PRD lists only `app_theme.dart`; tokens were split out because there are ~70 of them. `app_theme.dart` re-exports all three, so importing it is enough.
 - `app/app_shell.dart` — the bottom-nav scaffold had no home in the PRD's list.
 - `features/onboarding/` — required by the §7 launch flow but missing from the §29 folder list.
-- **No Dart splash screen.** `bootstrap()` awaits all init before `runApp`, so the native launch screen covers startup and no splash widget or loading gate is needed.
+- **No Dart splash screen.** `bootstrap()` awaits all init before `runApp`, so the **native** launch screen covers startup and no splash widget or loading gate is needed. It's branded via the `flutter_native_splash` block in `pubspec.yaml` — regenerate with `fvm dart run flutter_native_splash:create` after any change there, and never hand-edit the generated `LaunchImage.imageset` / `drawable*/` / `styles.xml` files.
 - `core/widgets/app_button.dart` and `app_text_field.dart` were **not** created — the theme's `filledButtonTheme` / `inputDecorationTheme` already produce the design's pill shapes, so wrappers would add indirection with no behavior. Real custom components live there instead: `scripture_card.dart`, `conversation_input.dart`, `section_label.dart`, `state_views.dart`.
 - Fonts come from `google_fonts` (network fetch, then cached). Before release, bundle the EB Garamond and Manrope TTFs so a first launch offline still renders correctly (both are OFL).
+
+### Brand assets
+
+`assets/images/` — all derived from `selah_logo.png` (the supplied 1024² lockup: sun rising over an open book, matching the PRD §33 concept). The source is RGB with a **white background and no alpha**, which is why the derivatives exist:
+
+| File | Purpose |
+|---|---|
+| `selah_logo.png` | original, untouched — white background, no alpha |
+| `selah_logo_transparent.png` | white → alpha; light-mode splash |
+| `selah_logo_dark.png` | inks remapped to `#BBCBB9` / `#E9C176`; dark-mode splash |
+| `selah_emblem.png` | emblem only, re-centred; Android 12+ light |
+| `selah_emblem_dark.png` | emblem only, recoloured; Android 12+ dark |
+
+Two things to know before regenerating any of these: the brand green `#405E44` is **too dark to read on the charcoal dark surface**, so any dark-mode use needs the recoloured variant; and the usual min-channel "white to alpha" trick desaturates that green badly, so alpha was derived from luminance with colours preserved instead. The generator scripts are throwaway (they lived in the session scratchpad, not the repo) — if the logo is ever replaced, the conversions need redoing, and PIL/ImageMagick are not installed on this machine.
 
 ### Conventions established
 
@@ -142,9 +174,24 @@ Structured response contract (rendered as independent sections, never one text b
   "explanation": "...", "reflectionQuestion": "...", "followUpPrompt": "..." }
 ```
 
-## Data
+## Scripture corpus
 
-Scripture corpus is stored **separately from app logic**: `Bible → Book → Chapter → Verse`, each verse `{id, book, bookOrder, chapter, verse, text, translation}` (e.g. id `psalm_23_1`). **Translation must be configurable** — only ship a translation whose license explicitly permits this use; never copy a copyrighted translation in without confirming permission.
+Ships as a **bundled SQLite asset**: `assets/scripture/kjv.db` — 66 books, 1189 chapters, **31,102 verses**, 6.9 MB. Public-domain KJV, so no licensing risk (PRD §12).
+
+Built by `tool/build_kjv_db.py` (committed, reproducible: `python3 tool/build_kjv_db.py`). Read that file's docstring before regenerating. It **refuses to emit a database** unless the corpus is exactly 66/1189/31102 with contiguous verse numbering and passes versification assertions — a Scripture app that silently drops verses is worse than one that fails loudly.
+
+Decisions baked in, each with a reason worth keeping:
+
+- **Source is `aruljohn/Bible-kjv`** (explicit verse numbers, so versification is verified not assumed). `thiagobodruk/bible` was **rejected** — it splits 3 John 1:14 and Revelation 12:17, which is Portuguese versification, not KJV. Any future source swap must pass the same assertions.
+- **No FTS5.** Absent from Android's bundled SQLite below API 26. Search uses `LIKE`, which SQLite evaluates case-insensitively for ASCII, and the KJV text is pure ASCII — so there's no lowercased duplicate column either. ~33 ms full scan at this size.
+- **Read-only, copied once.** sqflite needs a file path, so the asset is copied to the database dir on first launch, stamped with `ScriptureDatabase.schemaVersion` (bump it when the corpus changes). Fully offline, satisfying §37, and queries stay in SQLite rather than memory per §39.
+- **Verse ids** are `{book_slug}_{chapter}_{verse}` → `psalms_23_1` (note: `psalms`, not the PRD's illustrative `psalm`). Bookmarks/reflections/prayers reference verses by this id, so it must stay stable across rebuilds.
+- **`contextAround` is not semantic.** It returns adjacent verses. Real thematic relatedness needs embeddings, which arrive server-side in Milestone 3 — so the reader never implies a link the app can't justify.
+- **Today's Scripture** draws from a curated 40-verse pool (`ScriptureDataSource.dailyPool`), rotating deterministically by date. Not random across all 31,102: an arbitrary verse (a genealogy, an imprecation) makes a poor daily invitation. All 40 ids are verified against the corpus.
+
+User data (below) is separate and lives in Firestore. The corpus is app content, which is why `firestore.rules` grants no public read path at all.
+
+### Firestore
 
 Firestore (user data):
 

@@ -1,0 +1,73 @@
+rules_version = '2';
+
+// Selah — Firestore security rules.
+//
+// PRD §22: "A user can only read and write their own private data. Never allow
+// a different authenticated UID to access another user's private data."
+//
+// Conversations, reflections, and prayers are the most personal data in the
+// app. The default here is deny; every allowance below is scoped to the owning
+// uid, and there is no rule anywhere that grants cross-user reads.
+//
+// Deploy with: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- helpers
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Timestamps must be server-generated, so a client cannot backdate or
+    // forward-date its own records.
+    function hasServerTimestamp(field) {
+      return request.resource.data[field] == request.time;
+    }
+
+    // ------------------------------------------------------------------ users
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+
+      // A user may create only their own document.
+      allow create: if isOwner(uid)
+                    && hasServerTimestamp('createdAt');
+
+      // uid is the document id and must never be rewritten.
+      allow update: if isOwner(uid)
+                    && hasServerTimestamp('updatedAt');
+
+      // Account deletion (PRD §36) is a privileged operation: the client
+      // deletes its subcollections, then the auth account. Deleting the parent
+      // document is allowed so "delete my data" can complete.
+      allow delete: if isOwner(uid);
+
+      // ---------------------------------------------------------- subcollections
+      // Every user-scoped collection follows the same shape, so one rule
+      // covers conversations, bookmarks, reflections, and prayers. Adding a
+      // new subcollection under users/{uid} inherits this protection
+      // automatically — which is the point.
+      match /{collection}/{docId} {
+        allow read, write: if isOwner(uid)
+                           && collection in [
+                                'conversations',
+                                'bookmarks',
+                                'reflections',
+                                'prayers'
+                              ];
+
+        // Messages live one level deeper, under a conversation.
+        match /messages/{messageId} {
+          allow read, write: if isOwner(uid) && collection == 'conversations';
+        }
+      }
+    }
+
+    // -------------------------------------------------------------- catch-all
+    // Anything not matched above is denied. The Scripture corpus is NOT served
+    // from Firestore — it ships with the app — so there is no public read path
+    // here by design.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -4,9 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/app_router.dart';
 import '../../../app/app_theme.dart';
-import '../../../core/constants/app_constants.dart';
 import '../../../core/constants/app_strings.dart';
 import '../../../core/widgets/scripture_card.dart';
+import '../../scripture/data/scripture_repository.dart';
 
 /// Reflection — where a passage becomes personal (PRD §17).
 ///
@@ -48,12 +48,7 @@ class _ReflectionScreenState extends ConsumerState<ReflectionScreen> {
             vertical: AppSpacing.stackLg,
           ),
           children: [
-            // TODO(milestone-2): load the passage by scriptureId.
-            const ScriptureCard(
-              reference: 'Psalm 23:1',
-              text: 'The Lord is my shepherd; I shall not want.',
-              translation: AppConstants.defaultTranslation,
-            ),
+            if (widget.scriptureId case final id?) _Passage(scriptureId: id),
 
             const SizedBox(height: AppSpacing.sectionGap),
 
@@ -101,6 +96,29 @@ class _ReflectionScreenState extends ConsumerState<ReflectionScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The passage being reflected on, loaded from the corpus.
+class _Passage extends ConsumerWidget {
+  const _Passage({required this.scriptureId});
+
+  final String scriptureId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scripture = ref.watch(scriptureByIdProvider(scriptureId));
+
+    return scripture.maybeWhen(
+      data: (verse) => verse == null
+          ? const SizedBox.shrink()
+          : ScriptureCard(
+              reference: verse.reference,
+              text: verse.text,
+              translation: verse.translation,
+            ),
+      orElse: () => const SizedBox(height: 120),
     );
   }
 }

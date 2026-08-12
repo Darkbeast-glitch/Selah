@@ -41,6 +41,11 @@ dependencies:
   freezed_annotation: ^3.1.0
   json_annotation: ^4.12.0
   shared_preferences: ^2.5.5
+  firebase_core: ^4.13.0
+  firebase_auth: ^6.5.7
+  cloud_firestore: ^6.8.0
+  sqflite: ^2.4.3
+  path: ^1.9.1
 
 dev_dependencies:
   flutter_test:
@@ -52,6 +57,10 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_native_splash: ^2.4.8
+  build_runner: ^2.15.1
+  freezed: ^3.2.5
+  json_serializable: ^6.14.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -64,10 +73,11 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/images/
+    # The KJV corpus (66 books / 31,102 verses, ~6.9 MB). Built by
+    # tool/build_kjv_db.py — see that file before regenerating.
+    - assets/scripture/kjv.db
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
@@ -94,3 +104,45 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# ---------------------------------------------------------------------------
+# Native launch screen.
+#
+# Selah has no Dart splash widget by design: bootstrap() awaits preferences,
+# Firebase, and anonymous sign-in *before* runApp, so the native launch screen
+# is what the user actually sees during startup. This section brands it.
+#
+# Regenerate after changing anything here:
+#   fvm dart run flutter_native_splash:create
+#
+# The generated files (ios/Runner/Assets.xcassets/LaunchImage.imageset,
+# android/app/src/main/res/drawable*/, values*/styles.xml) are build artifacts
+# of this config — edit this block, never those files by hand.
+# ---------------------------------------------------------------------------
+flutter_native_splash:
+  # Warm ivory in light mode, deep charcoal in dark — matching `surface` in
+  # app_theme.dart so the splash dissolves into the app with no colour jump.
+  color: "#fcf9f8"
+  color_dark: "#141313"
+
+  # The brand logo with its white box removed. The dark variant recolours the
+  # forest green to #BBCBB9, which would otherwise vanish on charcoal.
+  image: assets/images/selah_logo_transparent.png
+  image_dark: assets/images/selah_logo_dark.png
+
+  # Full-bleed background, no status/nav bar tinting surprises.
+  android: true
+  ios: true
+  web: false
+
+  android_12:
+    # Android 12+ ignores the legacy splash and uses its own windowSplashScreen
+    # API, which masks the icon into a CIRCLE. The full lockup would be clipped
+    # to unreadable fragments, so this uses the emblem alone, re-centred on a
+    # full canvas at 44% coverage — inside the ~66% safe area.
+    image: assets/images/selah_emblem.png
+    image_dark: assets/images/selah_emblem_dark.png
+    color: "#fcf9f8"
+    color_dark: "#141313"
+    icon_background_color: "#fcf9f8"
+    icon_background_color_dark: "#141313"

@@ -9,6 +9,21 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # Build output. `build/ios/SourcePackages/` vendors the full source of
+    # every Firebase plugin, including their own tests, which would otherwise
+    # drown real findings in hundreds of irrelevant errors.
+    - build/**
+    # Generated code — Freezed and json_serializable output is not ours to lint.
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+
+  errors:
+    # Treat missing returns and unused imports as build-breaking rather than
+    # advisory, so they cannot accumulate.
+    unused_import: error
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

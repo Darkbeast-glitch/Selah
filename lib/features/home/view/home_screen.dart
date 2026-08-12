@@ -11,17 +11,13 @@ import '../../../core/utils/date_utils.dart';
 import '../../../core/widgets/conversation_input.dart';
 import '../../../core/widgets/scripture_card.dart';
 import '../../../core/widgets/section_label.dart';
+import '../../scripture/data/scripture_repository.dart';
 
 /// Home — the front door (PRD §9).
 ///
 /// Design: `selah_scripture_companion/home/`. The one job of this screen is to
 /// make it easy to say what you're carrying, so the prompt and input sit above
 /// everything else.
-///
-/// Structural scaffold: Today's Scripture is placeholder content until the
-/// Scripture corpus lands in Milestone 2, and sending a message currently just
-/// opens the conversation route. A `HomeViewModel` will supply the greeting,
-/// verse of the day, and send action.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -71,13 +67,7 @@ class HomeScreen extends ConsumerWidget {
 
             SectionLabel(AppStrings.homeTodaysScripture),
             const SizedBox(height: AppSpacing.stackMd),
-            // TODO(milestone-2): replace with the verse of the day from the
-            // Scripture repository.
-            const ScriptureCard(
-              reference: 'Psalm 23:1',
-              text: 'The Lord is my shepherd; I shall not want.',
-              translation: AppConstants.defaultTranslation,
-            ),
+            const _TodaysScripture(),
 
             const SizedBox(height: AppSpacing.sectionGap),
 
@@ -90,6 +80,69 @@ class HomeScreen extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Today's Scripture, drawn from the curated daily pool.
+///
+/// Every async state is handled (PRD §38) — the card must never collapse into a
+/// blank gap on the app's front door.
+class _TodaysScripture extends ConsumerWidget {
+  const _TodaysScripture();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final verse = ref.watch(verseOfTheDayProvider);
+
+    return verse.when(
+      loading: () => const _CardPlaceholder(),
+      error: (_, _) => _CardPlaceholder(
+        child: Center(
+          child: Text(
+            AppStrings.errorTitle,
+            style: context.text.bodyMedium?.copyWith(
+              color: context.colors.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
+      data: (scripture) {
+        if (scripture == null) {
+          // The pool id is missing from the corpus — a build-time mistake, not
+          // something the user can fix, so show nothing rather than an error.
+          return const SizedBox.shrink();
+        }
+        return ScriptureCard(
+          reference: scripture.reference,
+          text: scripture.text,
+          translation: scripture.translation,
+          onOpen: () => context.pushNamed(
+            AppRoute.scripture.name,
+            pathParameters: {'scriptureId': scripture.id},
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Reserves the card's height while loading so the page doesn't jump.
+class _CardPlaceholder extends StatelessWidget {
+  const _CardPlaceholder({this.child});
+
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 180,
+      decoration: BoxDecoration(
+        color: context.colors.surfaceContainerLow,
+        borderRadius: AppRadius.cardRadius,
+        border: Border.all(color: context.colors.outlineVariant, width: 0.5),
+      ),
+      child: child,
     );
   }
 }

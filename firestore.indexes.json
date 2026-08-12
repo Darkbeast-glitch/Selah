@@ -1,0 +1,15 @@
+{
+  "//": "Composite indexes only. Firestore maintains single-field indexes automatically and REJECTS them here, so the plain 'order by createdAt/updatedAt DESC' queries used by Library and Profile need no entry — they work out of the box.",
+  "indexes": [
+    {
+      "//": "Scripture detail: has this passage already been bookmarked? Filters by scriptureId, ordered newest first.",
+      "collectionGroup": "bookmarks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "scriptureId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
