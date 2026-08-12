@@ -4,6 +4,7 @@ import 'models/scripture.dart';
 import 'scripture_database.dart';
 import 'scripture_datasource.dart';
 import 'scripture_reference_parser.dart';
+import 'topic_catalog.dart';
 
 /// What a search produced, and how it was interpreted.
 ///
@@ -53,6 +54,13 @@ abstract interface class ScriptureRepository {
 
   /// One field, three behaviours (PRD §13): reference, book name, or keywords.
   Future<SearchOutcome> search(String query, {int limit, int offset});
+
+  /// Passages for a topic or a free-text message.
+  ///
+  /// Resolution order: a known topic returns its curated passages; anything else
+  /// falls back to keyword search. Returns empty rather than guessing when
+  /// neither yields anything — the app does not invent a passage to fill space.
+  Future<List<Scripture>> passagesFor(String query, {int limit});
 
   /// Neighbouring verses for the reader's "related passages" strip.
   ///
@@ -132,6 +140,54 @@ class LocalScriptureRepository implements ScriptureRepository {
   }
 
   @override
+  Future<List<Scripture>> passagesFor(String query, {int limit = 5}) async {
+    final ids = TopicCatalog.idsFor(query);
+    if (ids != null) {
+      // Preserve the catalog's order — it is editorial, not arbitrary.
+      final passages = <Scripture>[];
+      for (final id in ids.take(limit)) {
+        final verse = await _dataSource.verseById(id);
+        if (verse != null) passages.add(verse);
+      }
+      return passages;
+    }
+
+    // Free text: try the most distinctive word rather than the whole sentence,
+    // since "I am worried about my future" matches nothing verbatim.
+    final term = _searchTerm(query);
+    if (term == null) return const [];
+    return _dataSource.search(term, limit: limit);
+  }
+
+  /// Picks the longest meaningful word from a free-text message.
+  ///
+  /// Crude by design: this is a placeholder for real intent extraction, which is
+  /// the backend's job in Milestone 3 (PRD §11). It is not dressed up as more
+  /// than it is, and it never fabricates a match.
+  static String? _searchTerm(String query) {
+    const stopWords = {
+      'about', 'above', 'after', 'again', 'because', 'been', 'before', 'being',
+      'between', 'cannot', 'could', 'does', 'doing', 'down', 'during', 'each',
+      'from', 'have', 'having', 'here', 'into', 'just', 'more', 'most', 'much',
+      'myself', 'only', 'other', 'over', 'same', 'should', 'some', 'such',
+      'than', 'that', 'their', 'them', 'then', 'there', 'these', 'they',
+      'this', 'those', 'through', 'under', 'very', 'were', 'what', 'when',
+      'where', 'which', 'while', 'will', 'with', 'would', 'your', 'feel',
+      'feeling', 'really', 'right', 'like', 'know', 'think', 'want', 'need',
+    };
+
+    final words = query
+        .toLowerCase()
+        .split(RegExp(r"[^a-z']+"))
+        .where((w) => w.length > 3 && !stopWords.contains(w))
+        .toList();
+    if (words.isEmpty) return null;
+
+    words.sort((a, b) => b.length.compareTo(a.length));
+    return words.first;
+  }
+
+  @override
   Future<List<Scripture>> contextAround(
     Scripture scripture, {
     int radius = 2,
@@ -186,6 +242,11 @@ final chapterProvider =
   (ref, args) => ref
       .watch(scriptureRepositoryProvider)
       .chapterOf(args.book, args.chapter),
+);
+
+/// Passages for a topic chip or a free-text message, used by the conversation.
+final passagesForProvider = FutureProvider.family<List<Scripture>, String>(
+  (ref, query) => ref.watch(scriptureRepositoryProvider).passagesFor(query),
 );
 
 /// Verses adjacent to a given verse, for the reader's "In context" strip.

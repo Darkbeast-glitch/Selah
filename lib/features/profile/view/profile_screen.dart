@@ -7,6 +7,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/constants/app_strings.dart';
 import '../../../core/services/preferences_service.dart';
 import '../../../core/widgets/section_label.dart';
+import '../../library/data/library_repository.dart';
 
 /// Profile — your journey, preferences, and account (PRD §19).
 ///
@@ -41,19 +42,22 @@ class ProfileScreen extends ConsumerWidget {
 
             SectionLabel(AppStrings.profileJourneyLabel),
             const SizedBox(height: AppSpacing.stackMd),
-            // TODO(milestone-4): live counts from the library repository.
-            const _Row(
+            _CountRow(
               icon: Icons.bookmark_border_rounded,
               label: AppStrings.profileSavedScriptures,
+              count: ref.watch(bookmarksProvider).value?.length,
             ),
-            const _Row(
+            _CountRow(
               icon: Icons.edit_note_rounded,
               label: AppStrings.profileReflections,
+              count: ref.watch(reflectionsProvider).value?.length,
             ),
-            const _Row(
+            _CountRow(
               icon: Icons.self_improvement_outlined,
               label: AppStrings.profilePrayers,
+              count: ref.watch(prayersProvider).value?.length,
             ),
+            // TODO(milestone-4): conversation history, once conversations persist.
             const _Row(
               icon: Icons.forum_outlined,
               label: AppStrings.profileConversationHistory,
@@ -117,6 +121,31 @@ class ProfileScreen extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// A journey row with a live count. Shows nothing rather than "0" while the
+/// stream is still connecting, so the number never flickers 0 → real value.
+class _CountRow extends StatelessWidget {
+  const _CountRow({
+    required this.icon,
+    required this.label,
+    required this.count,
+  });
+
+  final IconData icon;
+  final String label;
+  final int? count;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Row(
+      icon: icon,
+      label: label,
+      trailing: count == null
+          ? const SizedBox(width: 24, height: 24)
+          : Text('$count', style: context.text.bodyMedium),
     );
   }
 }

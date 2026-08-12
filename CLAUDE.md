@@ -68,7 +68,9 @@ Built:
 - `bootstrap()` — prefs → `Firebase.initializeApp` → `ensureSignedIn()` → `runApp`. Sign-in failure is **deliberately non-fatal**: auth needs network, and an offline user must still reach saved Scriptures and reflections (§37), so the app starts anyway and retries next launch.
 - All nine screens exist and are navigable. **Onboarding and Appearance are fully functional** (both device-local). Home, Explore, Library, Profile, Conversation, Scripture detail, Reflection, and Prayer are structural scaffolds with placeholder content and `TODO(milestone-N)` markers where the real data goes.
 
-Next: **Milestone 2** — KJV corpus → search → reader. Nothing about it depends on Firebase.
+**Milestones 2 and 4 (partly) are done too.** Working end to end: corpus search and reader, curated topics, bookmarking, reflections, and prayer starters — all persisted per-user in Firestore and reflected live in Library and Profile counts.
+
+Next: **conversation persistence** (the last of Milestone 4 — `users/{uid}/conversations` + `messages`, History tab, auto-titles), then **Milestone 3** (backend + RAG), which is what finally replaces the curated topic catalog and adds the grounded "why this passage" explanation.
 
 ### Deviations from the PRD's file list — keep or revisit deliberately
 
@@ -187,7 +189,10 @@ Decisions baked in, each with a reason worth keeping:
 - **Read-only, copied once.** sqflite needs a file path, so the asset is copied to the database dir on first launch, stamped with `ScriptureDatabase.schemaVersion` (bump it when the corpus changes). Fully offline, satisfying §37, and queries stay in SQLite rather than memory per §39.
 - **Verse ids** are `{book_slug}_{chapter}_{verse}` → `psalms_23_1` (note: `psalms`, not the PRD's illustrative `psalm`). Bookmarks/reflections/prayers reference verses by this id, so it must stay stable across rebuilds.
 - **`contextAround` is not semantic.** It returns adjacent verses. Real thematic relatedness needs embeddings, which arrive server-side in Milestone 3 — so the reader never implies a link the app can't justify.
-- **Today's Scripture** draws from a curated 40-verse pool (`ScriptureDataSource.dailyPool`), rotating deterministically by date. Not random across all 31,102: an arbitrary verse (a genealogy, an imprecation) makes a poor daily invitation. All 40 ids are verified against the corpus.
+- **Today's Scripture** draws from a curated 40-verse pool (`ScriptureDataSource.dailyPool`), rotating deterministically by date. Not random across all 31,102: an arbitrary verse (a genealogy, an imprecation) makes a poor daily invitation.
+- **Topics are curated, not searched** (`topic_catalog.dart`, 20 topics × 5 verses). The words users think in are often absent from the KJV — "Relationships" appears nowhere, "Anxiety" only as "anxious"/"careful", "Decisions" not at all — so searching a topic name returns nothing for several of the app's own advertised topics. These are editorial choices the app owns, superseded by semantic retrieval in Milestone 3.
+
+**Curated ids are verified, not trusted:** run `python3 tool/verify_topics.py` after editing `topic_catalog.dart` or `dailyPool` (140 ids currently). A bad id fails *silently* at runtime — the topic just shows nothing. This can't live in `flutter test` (opening the SQLite asset needs a platform); `test/topic_catalog_test.dart` covers structure and UI coverage instead.
 
 User data (below) is separate and lives in Firestore. The corpus is app content, which is why `firestore.rules` grants no public read path at all.
 
@@ -206,7 +211,13 @@ users/{uid}                          createdAt, updatedAt, selectedTranslation
 
 Security rules: a user reads/writes only their own data. Never allow cross-UID access. Conversations are sensitive personal data — don't ship conversation content into analytics.
 
-Models: `UserProfile, Conversation, Message, Bookmark, Reflection, Prayer, Scripture`.
+Models: `Bookmark, Reflection, Prayer, Scripture` exist. `Conversation`, `Message`, `UserProfile` are still to come with conversation persistence.
+
+**Firestore models are hand-mapped, not `json_serializable`.** A Firestore document is not JSON: timestamps arrive as `Timestamp` and are written as `FieldValue.serverTimestamp()` sentinels, which a generated codec cannot round-trip. `fromDoc`/`toMap`/`newDoc` live on each model in `library_models.dart`. This is a deliberate deviation from the PRD's "use json_serializable for serialization" — `Scripture` still uses it, since it maps plain SQLite rows.
+
+**Saved items store only `scriptureId`, never verse text.** The text is resolved from the local corpus in `FirestoreLibraryRepository`, so Scripture has one source of truth and saved items stay correct if the translation changes. The trade-off: an id absent from the current corpus renders a "not in the current Scripture library" card rather than a blank one.
+
+**Bookmarks are keyed by `scriptureId`**, not an auto-id — so "is this saved?" is a single document read and saving is idempotent (double-tap can't duplicate).
 
 ## Design system
 

@@ -5,16 +5,16 @@ import 'package:go_router/go_router.dart';
 import '../../../app/app_router.dart';
 import '../../../app/app_theme.dart';
 import '../../../core/constants/app_strings.dart';
+import '../../../core/errors/app_exception.dart';
 import '../../../core/widgets/scripture_card.dart';
+import '../../library/data/library_repository.dart';
 import '../../scripture/data/scripture_repository.dart';
 
 /// Reflection — where a passage becomes personal (PRD §17).
 ///
 /// Design: `selah_scripture_companion/reflection/`. Reflections are private by
-/// default and never leave the user's own Firestore subtree.
-///
-/// Structural scaffold: the editor is local-only. Milestone 4 adds a
-/// `ReflectionViewModel` that persists to `users/{uid}/reflections`.
+/// default and live only under the user's own Firestore subtree, which
+/// `firestore.rules` enforces.
 class ReflectionScreen extends ConsumerStatefulWidget {
   const ReflectionScreen({super.key, this.scriptureId, this.reflectionId});
 
@@ -31,10 +31,83 @@ class ReflectionScreen extends ConsumerStatefulWidget {
 class _ReflectionScreenState extends ConsumerState<ReflectionScreen> {
   final _controller = TextEditingController();
 
+  /// Set once saved, so a second tap updates rather than creating a duplicate.
+  String? _savedId;
+  bool _isSaving = false;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _savedId = widget.reflectionId;
+    if (_savedId != null) _load(_savedId!);
+  }
+
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _load(String id) async {
+    setState(() => _isLoading = true);
+    try {
+      final existing = await ref.read(libraryRepositoryProvider).reflection(id);
+      if (existing != null && mounted) _controller.text = existing.content;
+    } on AppException catch (error) {
+      if (mounted) _notify(error.message);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _notify(String message) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(message)));
+
+  Future<void> _save() async {
+    final content = _controller.text.trim();
+    if (content.isEmpty) {
+      _notify('Write something first.');
+      return;
+    }
+    final scriptureId = widget.scriptureId;
+    if (scriptureId == null) {
+      _notify('This reflection is not linked to a passage.');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      final library = ref.read(libraryRepositoryProvider);
+      if (_savedId case final id?) {
+        await library.updateReflection(id, content);
+      } else {
+        _savedId = await library.saveReflection(
+          scriptureId: scriptureId,
+          content: content,
+        );
+      }
+      if (mounted) _notify('Reflection saved');
+    } on AppException catch (error) {
+      if (mounted) _notify(error.message);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  /// Saves before leaving, so the prayer is built from kept words rather than a
+  /// draft that vanishes.
+  Future<void> _toPrayer() async {
+    if (_controller.text.trim().isNotEmpty && _savedId == null) await _save();
+    if (!mounted) return;
+    context.pushNamed(
+      AppRoute.prayer.name,
+      queryParameters: {
+        'reflectionId': ?_savedId,
+        'scriptureId': ?widget.scriptureId,
+        'seed': _controller.text.trim(),
+      },
+    );
   }
 
   @override
@@ -60,13 +133,14 @@ class _ReflectionScreenState extends ConsumerState<ReflectionScreen> {
 
             TextField(
               controller: _controller,
+              enabled: !_isLoading,
               minLines: 6,
               maxLines: null,
               keyboardType: TextInputType.multiline,
               textCapitalization: TextCapitalization.sentences,
               style: context.text.bodyMedium,
-              decoration: const InputDecoration(
-                hintText: AppStrings.reflectionHint,
+              decoration: InputDecoration(
+                hintText: _isLoading ? 'Loading…' : AppStrings.reflectionHint,
               ),
             ),
             const SizedBox(height: AppSpacing.stackSm),
@@ -77,20 +151,19 @@ class _ReflectionScreenState extends ConsumerState<ReflectionScreen> {
 
             const SizedBox(height: AppSpacing.sectionGap),
 
-            // TODO(milestone-4): persist via the reflection repository.
             FilledButton(
-              onPressed: () {},
-              child: const Text(AppStrings.reflectionSave),
+              onPressed: _isSaving ? null : _save,
+              child: Text(
+                _isSaving
+                    ? 'Saving…'
+                    : _savedId == null
+                        ? AppStrings.reflectionSave
+                        : 'Update reflection',
+              ),
             ),
             const SizedBox(height: AppSpacing.stackMd),
             OutlinedButton(
-              onPressed: () => context.pushNamed(
-                AppRoute.prayer.name,
-                queryParameters: {
-                  if (widget.reflectionId != null)
-                    'reflectionId': widget.reflectionId!,
-                },
-              ),
+              onPressed: _isSaving ? null : _toPrayer,
               child: const Text(AppStrings.reflectionToPrayer),
             ),
           ],
@@ -100,7 +173,7 @@ class _ReflectionScreenState extends ConsumerState<ReflectionScreen> {
   }
 }
 
-/// The passage being reflected on, loaded from the corpus.
+/// The passage being reflected on, loaded from the local corpus.
 class _Passage extends ConsumerWidget {
   const _Passage({required this.scriptureId});
 

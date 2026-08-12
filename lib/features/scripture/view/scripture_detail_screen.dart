@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import '../../../app/app_router.dart';
 import '../../../app/app_theme.dart';
 import '../../../core/constants/app_strings.dart';
+import '../../../core/errors/app_exception.dart';
+import '../../library/data/library_repository.dart';
 import '../../../core/widgets/scripture_card.dart';
 import '../../../core/widgets/section_label.dart';
 import '../../../core/widgets/state_views.dart';
@@ -34,18 +36,14 @@ class ScriptureDetailScreen extends ConsumerWidget {
       appBar: AppBar(
         title: Text(verse.value?.chapterReference ?? ''),
         actions: [
-          // TODO(milestone-4): bookmark via the library repository.
-          IconButton(
-            onPressed: verse.value == null ? null : () {},
-            icon: const Icon(Icons.bookmark_border_rounded),
-            tooltip: AppStrings.scriptureSave,
-          ),
-          if (verse.value case final scripture?)
+          if (verse.value case final scripture?) ...[
+            _BookmarkButton(scriptureId: scripture.id),
             IconButton(
               onPressed: () => _copy(context, scripture),
               icon: const Icon(Icons.copy_rounded),
               tooltip: AppStrings.scriptureCopy,
             ),
+          ],
         ],
       ),
       body: verse.when(
@@ -74,6 +72,51 @@ class ScriptureDetailScreen extends ConsumerWidget {
     );
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Copied')),
+    );
+  }
+}
+
+/// Save / unsave this passage.
+///
+/// Reflects the stored state via a stream, so the icon is driven by Firestore
+/// rather than local guesswork — and stays correct across screens and devices.
+class _BookmarkButton extends ConsumerWidget {
+  const _BookmarkButton({required this.scriptureId});
+
+  final String scriptureId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final saved = ref.watch(isBookmarkedProvider(scriptureId));
+    final isSaved = saved.value ?? false;
+
+    return IconButton(
+      // Disabled while the first value is in flight, so a tap cannot toggle
+      // against an unknown state.
+      onPressed: saved.hasValue
+          ? () async {
+              final messenger = ScaffoldMessenger.of(context);
+              try {
+                await ref
+                    .read(libraryRepositoryProvider)
+                    .toggleBookmark(scriptureId, isSaved: isSaved);
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(isSaved ? 'Removed' : AppStrings.scriptureSaved),
+                  ),
+                );
+              } on AppException catch (error) {
+                messenger.showSnackBar(
+                  SnackBar(content: Text(error.message)),
+                );
+              }
+            }
+          : null,
+      icon: Icon(
+        isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+        color: isSaved ? context.colors.primary : null,
+      ),
+      tooltip: isSaved ? 'Remove' : AppStrings.scriptureSave,
     );
   }
 }

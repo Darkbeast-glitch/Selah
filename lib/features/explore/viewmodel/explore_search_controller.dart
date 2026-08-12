@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../scripture/data/scripture_repository.dart';
+import '../../scripture/data/topic_catalog.dart';
 
 /// Owns Explore's search state.
 ///
@@ -32,6 +33,26 @@ class ExploreSearchController extends Notifier<AsyncValue<SearchOutcome?>> {
     _query = trimmed;
     _limit = AppConstants.searchPageSize;
     state = const AsyncValue.loading();
+
+    // A topic chip resolves to its curated passages rather than a keyword scan.
+    // Searching the topic name would return nothing at all for several of them
+    // ("Relationships" and "Decisions" never appear in the KJV).
+    if (TopicCatalog.isTopic(trimmed)) {
+      state = await AsyncValue.guard(() async {
+        final passages = await ref
+            .read(scriptureRepositoryProvider)
+            .passagesFor(trimmed, limit: 10);
+        return passages.isEmpty
+            ? NoMatch(trimmed)
+            : KeywordMatch(
+                query: trimmed,
+                scriptures: passages,
+                total: passages.length,
+              );
+      });
+      return;
+    }
+
     state = await AsyncValue.guard(
       () => ref.read(scriptureRepositoryProvider).search(trimmed, limit: _limit),
     );

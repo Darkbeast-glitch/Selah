@@ -132,6 +132,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => PrayerScreen(
           reflectionId: state.uri.queryParameters['reflectionId'],
           prayerId: state.uri.queryParameters['prayerId'],
+          scriptureId: state.uri.queryParameters['scriptureId'],
+          seed: state.uri.queryParameters['seed'],
         ),
       ),
     ],
