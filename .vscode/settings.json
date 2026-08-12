@@ -1,0 +1,13 @@
+{
+  // Point the Dart extension at the FVM-managed SDK so VS Code, the analyzer,
+  // and the debugger all use the same Flutter version as the CLI.
+  "dart.flutterSdkPath": ".fvm/flutter_sdk",
+
+  // Keep the pinned SDK out of search and file watching.
+  "search.exclude": {
+    "**/.fvm": true
+  },
+  "files.watcherExclude": {
+    "**/.fvm": true
+  }
+}
