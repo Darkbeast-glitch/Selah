@@ -4,8 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/app_theme.dart';
 import '../../../core/constants/app_strings.dart';
 import '../../../core/errors/app_exception.dart';
+import '../../../core/widgets/safety_notice.dart';
 import '../../../core/widgets/section_label.dart';
+import '../../conversation/data/ai_repository.dart';
 import '../../library/data/library_repository.dart';
+import '../../scripture/data/scripture_repository.dart';
 
 /// Prayer starter (PRD §18).
 ///
@@ -48,7 +51,12 @@ class _PrayerScreenState extends ConsumerState<PrayerScreen> {
 
   bool _editing = false;
   bool _isSaving = false;
+  bool _isGenerating = false;
   int _openingIndex = 0;
+
+  /// Crisis support text from the backend (PRD §25), if the reflection carried
+  /// crisis language. Displayed prominently, never dismissible.
+  String? _safetyNotice;
 
   /// Openings the app owns. Deliberately generic and non-presumptuous — they
   /// address God without claiming to speak *for* God (PRD §2).
@@ -70,6 +78,16 @@ class _PrayerScreenState extends ConsumerState<PrayerScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // Try for a generated starter on open; the local composition is already in
+    // the field, so there is never an empty state to look at while it loads.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (ref.read(aiRepositoryProvider).isAvailable) _regenerate();
+    });
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     super.dispose();
@@ -78,11 +96,52 @@ class _PrayerScreenState extends ConsumerState<PrayerScreen> {
   void _notify(String message) => ScaffoldMessenger.of(context)
       .showSnackBar(SnackBar(content: Text(message)));
 
-  void _regenerate() {
-    setState(() {
-      _openingIndex++;
-      _controller.text = _compose();
-    });
+  /// Asks the backend for a generated starter, falling back to the local
+  /// composition when it can't.
+  ///
+  /// The fallback is not a degraded experience so much as an honest one: the
+  /// local version is an app-owned opening plus the user's own words, which is
+  /// exactly what a "starter" should be when there is no model available.
+  Future<void> _regenerate() async {
+    final scriptureId = widget.scriptureId;
+    final seed = widget.seed?.trim() ?? '';
+
+    if (!ref.read(aiRepositoryProvider).isAvailable
+        || scriptureId == null
+        || seed.isEmpty) {
+      setState(() {
+        _openingIndex++;
+        _controller.text = _compose();
+      });
+      return;
+    }
+
+    setState(() => _isGenerating = true);
+    try {
+      final passage = await ref.read(scriptureByIdProvider(scriptureId).future);
+      if (passage == null) throw const NotFoundException();
+
+      final generated = await ref
+          .read(aiRepositoryProvider)
+          .prayerFor(reflection: seed, passage: passage);
+
+      if (!mounted) return;
+      setState(() {
+        _controller.text = generated.prayerStarter;
+        _safetyNotice = generated.safetyNotice;
+      });
+    } on AppException catch (error) {
+      if (!mounted) return;
+      // Rotate the local opening so the button still does something useful,
+      // and say why the generated version isn't there.
+      setState(() {
+        _openingIndex++;
+        _controller.text = _compose();
+      });
+      _notify(error.message);
+    } finally {
+      if (mounted) setState(() => _isGenerating = false);
+    }
   }
 
   Future<void> _save() async {
@@ -121,9 +180,16 @@ class _PrayerScreenState extends ConsumerState<PrayerScreen> {
             vertical: AppSpacing.stackLg,
           ),
           children: [
+            // PRD §25 — shown above the prayer, never dismissible.
+            if (_safetyNotice case final notice?) ...[
+              SafetyNotice(notice: notice),
+              const SizedBox(height: AppSpacing.stackLg),
+            ],
+
             _PrayerCard(
               controller: _controller,
               editing: _editing,
+              isGenerating: _isGenerating,
               onChanged: () => setState(() {}),
             ),
 
@@ -147,8 +213,10 @@ class _PrayerScreenState extends ConsumerState<PrayerScreen> {
             ),
             const SizedBox(height: AppSpacing.stackMd),
             TextButton(
-              onPressed: _regenerate,
-              child: const Text(AppStrings.prayerRegenerate),
+              onPressed: _isGenerating ? null : _regenerate,
+              child: Text(
+                _isGenerating ? 'Writing…' : AppStrings.prayerRegenerate,
+              ),
             ),
           ],
         ),
@@ -164,11 +232,16 @@ class _PrayerCard extends StatelessWidget {
   const _PrayerCard({
     required this.controller,
     required this.editing,
+    required this.isGenerating,
     required this.onChanged,
   });
 
   final TextEditingController controller;
   final bool editing;
+
+  /// Shows a small spinner beside the label while the backend writes, so the
+  /// text swapping under the user isn't unexplained.
+  final bool isGenerating;
   final VoidCallback onChanged;
 
   @override
@@ -185,9 +258,24 @@ class _PrayerCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionLabel(
-            AppStrings.prayerStarterLabel,
-            color: selah.primaryFixedDim,
+          Row(
+            children: [
+              SectionLabel(
+                AppStrings.prayerStarterLabel,
+                color: selah.primaryFixedDim,
+              ),
+              if (isGenerating) ...[
+                const SizedBox(width: AppSpacing.stackSm),
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    color: selah.primaryFixedDim,
+                  ),
+                ),
+              ],
+            ],
           ),
           const SizedBox(height: AppSpacing.stackMd),
           if (editing)

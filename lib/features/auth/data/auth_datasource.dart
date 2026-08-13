@@ -51,6 +51,24 @@ class AuthDataSource {
     }
   }
 
+  /// A fresh Firebase ID token, for authenticating against Selah's own backend.
+  ///
+  /// The backend verifies this signature against Google's public keys and trusts
+  /// the `sub` claim as the uid — which is why no API key or user identifier
+  /// ever needs to travel from the app (PRD §22/§23).
+  ///
+  /// `getIdToken()` refreshes automatically when the cached token is near
+  /// expiry, so this is safe to call per request; the SDK caches for us.
+  Future<String?> idToken() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+    try {
+      return await user.getIdToken();
+    } on FirebaseAuthException catch (error, stackTrace) {
+      throw AuthException(cause: error, stackTrace: stackTrace);
+    }
+  }
+
   /// PRD §36 requires a working "delete my data" path. Deleting the auth user
   /// is the last step — the caller must remove Firestore data first, because a
   /// deleted user can no longer satisfy the security rules that guard it.

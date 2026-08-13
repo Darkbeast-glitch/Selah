@@ -6,27 +6,33 @@ import '../../../app/app_router.dart';
 import '../../../app/app_shell.dart';
 import '../../../app/app_theme.dart';
 import '../../../core/constants/app_strings.dart';
+import '../../../core/errors/app_exception.dart';
 import '../../../core/utils/date_utils.dart';
 import '../../../core/widgets/scripture_card.dart';
 import '../../../core/widgets/section_label.dart';
 import '../../../core/widgets/state_views.dart';
+import '../../conversation/data/conversation_repository.dart';
+import '../../conversation/data/models/conversation_models.dart';
 import '../data/library_repository.dart';
 
 /// Library — everything the user has kept (PRD §16).
 ///
-/// Design: `selah_scripture_companion/library/`. Tabs for saved Scripture and
-/// what the user has written.
-///
-/// The History tab is still empty: conversation persistence is the remaining
-/// part of Milestone 4. Reflections stand in as the "what I've written" view for
-/// now, which is honest — there is no fabricated history list.
+/// Design: `selah_scripture_companion/library/`. The PRD specifies two tabs
+/// (Saved | History); Reflections and Prayers are split out as their own rather
+/// than buried, because each is a distinct kind of keeping and the Profile links
+/// to them individually.
 class LibraryScreen extends ConsumerWidget {
-  const LibraryScreen({super.key});
+  const LibraryScreen({super.key, this.initialTab = 0});
+
+  /// Which tab to open on. Lets Profile's journey rows deep-link straight to
+  /// the thing they count, instead of dropping the user on Saved every time.
+  final int initialTab;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
+      initialIndex: initialTab.clamp(0, 3),
       child: Scaffold(
         body: SafeArea(
           bottom: false,
@@ -45,6 +51,8 @@ class LibraryScreen extends ConsumerWidget {
                 ),
               ),
               TabBar(
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
                 labelColor: context.colors.primary,
                 unselectedLabelColor: context.colors.outline,
                 indicatorColor: context.colors.primary,
@@ -52,6 +60,7 @@ class LibraryScreen extends ConsumerWidget {
                 dividerColor: context.colors.outlineVariant,
                 tabs: const [
                   Tab(text: AppStrings.librarySavedTab),
+                  Tab(text: AppStrings.libraryHistoryTab),
                   Tab(text: AppStrings.profileReflections),
                   Tab(text: AppStrings.profilePrayers),
                 ],
@@ -62,7 +71,12 @@ class LibraryScreen extends ConsumerWidget {
                     bottom: AppShell.bottomInset(context),
                   ),
                   child: const TabBarView(
-                    children: [_SavedTab(), _ReflectionsTab(), _PrayersTab()],
+                    children: [
+                      _SavedTab(),
+                      _HistoryTab(),
+                      _ReflectionsTab(),
+                      _PrayersTab(),
+                    ],
                   ),
                 ),
               ),
@@ -120,6 +134,175 @@ class _SavedTab extends ConsumerWidget {
                 );
               },
             ),
+    );
+  }
+}
+
+/// Past conversations, most recently active first (PRD §16).
+class _HistoryTab extends ConsumerWidget {
+  const _HistoryTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final conversations = ref.watch(conversationsProvider);
+
+    return conversations.when(
+      loading: () => const LoadingView(),
+      error: (error, _) => ErrorView(
+        message: '$error',
+        onRetry: () => ref.invalidate(conversationsProvider),
+      ),
+      data: (items) => items.isEmpty
+          ? const EmptyView(
+              title: AppStrings.emptyHistoryTitle,
+              body: AppStrings.emptyHistoryBody,
+              icon: Icons.forum_outlined,
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.all(AppSpacing.containerMargin),
+              itemCount: items.length,
+              separatorBuilder: (_, _) =>
+                  const SizedBox(height: AppSpacing.stackSm),
+              itemBuilder: (context, index) {
+                final conversation = items[index];
+                return _ConversationRow(
+                  conversation: conversation,
+                  onOpen: () => context.pushNamed(
+                    AppRoute.conversation.name,
+                    queryParameters: {'id': conversation.id},
+                  ),
+                  onDelete: () => ref
+                      .read(conversationRepositoryProvider)
+                      .delete(conversation.id),
+                );
+              },
+            ),
+    );
+  }
+}
+
+class _ConversationRow extends StatelessWidget {
+  const _ConversationRow({
+    required this.conversation,
+    required this.onOpen,
+    required this.onDelete,
+  });
+
+  final Conversation conversation;
+  final VoidCallback onOpen;
+  final Future<void> Function() onDelete;
+
+  /// Confirms, then deletes. Shared by the swipe and the button so both paths
+  /// ask the same question and neither can quietly diverge from the other.
+  ///
+  /// Returns whether the row should disappear, which is what `confirmDismiss`
+  /// needs; the button ignores it and lets the stream update remove the row.
+  Future<bool> _confirmAndDelete(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this conversation?'),
+        content: Text(
+          'This removes "${conversation.title}" and everything in it. '
+          'It cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (!(confirmed ?? false)) return false;
+
+    try {
+      await onDelete();
+      return true;
+    } on AppException catch (error) {
+      // Report the failure rather than letting the row vanish from the UI while
+      // the document is still there.
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+      return false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dismissible(
+      key: ValueKey(conversation.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: AppSpacing.stackLg),
+        decoration: BoxDecoration(
+          color: context.colors.errorContainer,
+          borderRadius: AppRadius.cardRadius,
+        ),
+        child: Icon(
+          Icons.delete_outline_rounded,
+          color: context.colors.onErrorContainer,
+        ),
+      ),
+      // Conversations are personal; neither route deletes one silently.
+      confirmDismiss: (_) => _confirmAndDelete(context),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: AppRadius.cardRadius,
+        child: InkWell(
+          onTap: onOpen,
+          borderRadius: AppRadius.cardRadius,
+          child: Container(
+            padding: const EdgeInsets.all(AppSpacing.stackLg),
+            decoration: BoxDecoration(
+              color: context.colors.surfaceContainerLow,
+              borderRadius: AppRadius.cardRadius,
+              border: Border.all(color: context.colors.outlineVariant),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        conversation.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: context.text.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        AppDateUtils.relativeLabel(conversation.updatedAt),
+                        style: context.text.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                // Explicit button as well as the swipe: swipe-to-delete is
+                // undiscoverable unless something tells you it exists.
+                IconButton(
+                  onPressed: () => _confirmAndDelete(context),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                  color: context.colors.outline,
+                  tooltip: 'Delete conversation',
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: context.colors.outlineVariant,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

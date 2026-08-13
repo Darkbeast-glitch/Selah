@@ -18,6 +18,9 @@ abstract interface class AuthRepository {
   /// Resolves the session, creating an anonymous one if needed.
   Future<String> ensureSignedIn();
 
+  /// A bearer token for Selah's own backend, or null when there is no session.
+  Future<String?> idToken();
+
   /// Deletes the auth account. Remove Firestore data first.
   Future<void> deleteAccount();
 }
@@ -39,6 +42,9 @@ class FirebaseAuthRepository implements AuthRepository {
     final user = await _dataSource.signInAnonymouslyIfNeeded();
     return user.uid;
   }
+
+  @override
+  Future<String?> idToken() => _dataSource.idToken();
 
   @override
   Future<void> deleteAccount() => _dataSource.deleteAccount();

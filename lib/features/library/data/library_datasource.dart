@@ -67,6 +67,43 @@ class LibraryDataSource {
         });
       });
 
+  /// Deletes every library document for [uid], then the user document itself.
+  ///
+  /// Part of PRD §36's "delete my data". Must run **before** the auth account is
+  /// deleted: `firestore.rules` scopes every write to `request.auth.uid`, so a
+  /// deleted user can no longer reach their own data — the order is not a
+  /// preference, it is the only order that works.
+  ///
+  /// Firestore caps a batch at 500 operations, so collections are deleted in
+  /// chunks rather than one commit.
+  Future<void> deleteAll(String uid) => _guard(() async {
+    for (final name in [
+      AppConstants.bookmarksCollection,
+      AppConstants.reflectionsCollection,
+      AppConstants.prayersCollection,
+    ]) {
+      await _deleteCollection(_collection(uid, name));
+    }
+    await _user(uid).delete();
+  });
+
+  /// Deletes a collection in batches of 400 (comfortably under the 500 cap).
+  Future<void> _deleteCollection(Query<Map<String, dynamic>> query) async {
+    while (true) {
+      final snapshot = await query.limit(400).get();
+      if (snapshot.docs.isEmpty) return;
+
+      final batch = _firestore.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+
+      // A short page means we just cleared the tail.
+      if (snapshot.docs.length < 400) return;
+    }
+  }
+
   // ----------------------------------------------------------- bookmarks ---
 
   Stream<List<Bookmark>> watchBookmarks(String uid, {int limit = 50}) => _watch(

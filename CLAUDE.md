@@ -10,6 +10,7 @@ Flutter (iOS + Android) Christian Scripture companion. Users bring a real-life s
 
 ```
 Selah/
+├── selah-backend/              # Cloudflare Worker: AI backend (own README)
 └── selah/                      # the Flutter project — this file, run flutter commands here
     ├── lib/
     ├── android/  ios/          # the only platforms
@@ -68,16 +69,66 @@ Built:
 - `bootstrap()` — prefs → `Firebase.initializeApp` → `ensureSignedIn()` → `runApp`. Sign-in failure is **deliberately non-fatal**: auth needs network, and an offline user must still reach saved Scriptures and reflections (§37), so the app starts anyway and retries next launch.
 - All nine screens exist and are navigable. **Onboarding and Appearance are fully functional** (both device-local). Home, Explore, Library, Profile, Conversation, Scripture detail, Reflection, and Prayer are structural scaffolds with placeholder content and `TODO(milestone-N)` markers where the real data goes.
 
-**Milestones 2 and 4 (partly) are done too.** Working end to end: corpus search and reader, curated topics, bookmarking, reflections, and prayer starters — all persisted per-user in Firestore and reflected live in Library and Profile counts.
+**Milestones 1, 2, and 4 are complete.** Working end to end: corpus search and reader, curated topics, bookmarking, reflections, prayer starters, and conversation history — all persisted per-user in Firestore, with live counts on Profile.
 
-Next: **conversation persistence** (the last of Milestone 4 — `users/{uid}/conversations` + `messages`, History tab, auto-titles), then **Milestone 3** (backend + RAG), which is what finally replaces the curated topic catalog and adds the grounded "why this passage" explanation.
+## AI backend (`../selah-backend/`)
+
+A **Cloudflare Worker**, not Firebase Functions — Functions require the Blaze plan and a billing account, which this project doesn't have. Read `../selah-backend/README.md` before touching it.
+
+- **The app supplies the Scripture; the model never generates it.** `POST /v1/reflect` takes locally-retrieved passages and returns only commentary on them. This makes PRD 24's "never invent verses" structural rather than a prompt instruction.
+- **Provider is swappable** (`src/providers/`): Groq on the free tier now, Claude Haiku 4.5 (~$0.0036/turn) by changing one var — no Flutter release needed.
+- **Responses are gated, not trusted.** Four safety checks reject divine-authority claims, clinical claims, harmful steering, and *any chapter-and-verse citation the app didn't supply*. A violation returns `response_rejected`; the app must show its error state, not a partial reflection.
+- **`safetyNotice` in the response is mandatory UI when non-null** — it's PRD §25's crisis requirement, computed from the user's message independently of what the model returns.
+- **`provider_busy` (503) means the free tier's project-wide quota is exhausted** — the whole app's AI is down, not one user's. The app should fall back to offline behaviour (saved Scriptures, reflections, local search) rather than implying user error.
+
+Never put an API key in the Flutter app (§22/§23). The app sends its Firebase ID token; the Worker holds the key.
+
+### App side (`features/conversation/data/`)
+
+`AiDataSource` is the only file that knows the backend's wire format; `AiRepository` retrieves passages locally **then** calls it. `conversationTurnProvider` is keyed by message so a turn already answered is never re-requested — each call costs money or free-tier quota.
+
+**The backend URL is a `--dart-define`, not a constant:**
+
+```bash
+# iOS simulator
+fvm flutter run --dart-define=SELAH_AI_BASE_URL=http://localhost:8787
+# Android emulator (10.0.2.2 = host machine)
+fvm flutter run --dart-define=SELAH_AI_BASE_URL=http://10.0.2.2:8787
+# Physical device — Mac's LAN IP, and run: npx wrangler dev --ip 0.0.0.0
+fvm flutter run --dart-define=SELAH_AI_BASE_URL=http://192.168.1.42:8787
+```
+
+**iOS blocks LAN development traffic twice, and both failures are silent.** `ios/Runner/Info.plist` therefore carries:
+
+- `NSAppTransportSecurity → NSAllowsLocalNetworking` — ATS blocks cleartext `http://` by default. Scoped to local addresses deliberately; **do not** replace it with `NSAllowsArbitraryLoads`, which disables ATS globally and needs justification at App Store review.
+- `NSLocalNetworkUsageDescription` — since iOS 14 an app may not touch a `192.168.x.x` address without declaring why. Missing it makes the request *hang* rather than fail, so the UI sits on "Finding relevant Scripture…" with nothing in the console and nothing in `wrangler tail`.
+
+iOS prompts for local-network permission on the first request — **tap Allow**, or every call fails afterwards. In production the URL is HTTPS to `*.workers.dev`, so neither key is exercised and no prompt appears.
+
+Info.plist changes need a **full rebuild** — hot restart won't pick them up.
+
+`AiDataSource` logs every request in debug (`[ai] POST …`, status, timing, and failure reason). If you see no `[ai]` line at all, the call never happened: check `AppConfig.isAiConfigured` (i.e. that `--dart-define` was passed).
+
+**A build with no `SELAH_AI_BASE_URL` is a valid build**, not a broken one: `AppConfig.isAiConfigured` is false, the AI sections are simply absent, and Scripture search, the reader, saving, and reflections all still work. Every AI failure degrades the same way — the passages still render and the reason is shown with a retry, because the Scripture is the point and the commentary is the addition (§37).
+
+`core/widgets/safety_notice.dart` renders `safetyNotice`. It is deliberately non-dismissible and uses the error container rather than the calm palette — it should interrupt the app's unhurried rhythm. Do not restyle it into the background.
+
+Next: **Milestone 3** — the backend and RAG. This is the piece that replaces the curated topic catalog with real semantic retrieval, fills the deliberately-empty "why this passage" section in the conversation, and makes prayer starters genuinely generated. It needs two decisions first: where the backend lives (Firebase Functions vs. standalone) and an LLM API key — which must never reach the Flutter app (PRD §22/§23).
+
+**"Delete my data" (§36) is implemented** — `features/profile/data/data_deletion_service.dart`. **Order is load-bearing:** conversations → library → user doc → auth account. `firestore.rules` scopes every operation to `request.auth.uid`, so deleting the account first would leave the data permanently unreachable *and* undeleted. It is deliberately not best-effort: a failure leaves the account intact so the user can retry, because half-deleting someone's reflections and orphaning the rest is worse than not starting. A fresh anonymous session is created afterwards, since §20 means an app with no identity can't save anything.
+
+**Every Profile row responds to a tap.** Rows for unbuilt features (notifications, language) say *why* rather than "coming soon" — a user who learns only one translation is licensed understands the app; "coming soon" just reads as unfinished. Journey rows deep-link into Library tabs via `?tab=`. About/Privacy/Terms/Sources open `InfoSheet` with content from `core/constants/app_info_text.dart` — **that copy describes what the app actually does, so change it in the same commit as any change to data handling or the AI path.**
+
+Still outstanding for release: reviewed Privacy and Terms documents at public URLs (both stores require them — Cloudflare Pages would host them free), notifications (§34), analytics (§35), and bundling the fonts.
 
 ### Deviations from the PRD's file list — keep or revisit deliberately
 
 - `app/theme/{app_colors,app_typography,app_spacing}.dart` — the PRD lists only `app_theme.dart`; tokens were split out because there are ~70 of them. `app_theme.dart` re-exports all three, so importing it is enough.
 - `app/app_shell.dart` — the bottom-nav scaffold had no home in the PRD's list.
 - `features/onboarding/` — required by the §7 launch flow but missing from the §29 folder list.
-- **No Dart splash screen.** `bootstrap()` awaits all init before `runApp`, so the **native** launch screen covers startup and no splash widget or loading gate is needed. It's branded via the `flutter_native_splash` block in `pubspec.yaml` — regenerate with `fvm dart run flutter_native_splash:create` after any change there, and never hand-edit the generated `LaunchImage.imageset` / `drawable*/` / `styles.xml` files.
+- **No Dart splash screen.** `bootstrap()` completes its (bounded, local) init before `runApp`, so the **native** launch screen covers startup and no splash widget or loading gate is needed.
+
+**Never add an unbounded `await` to `bootstrap()`.** Only local, fast work may block the first frame. Awaiting anonymous sign-in — a network round-trip — once caused a startup bug that looked like a Flutter quirk: with no Flutter UI produced for seconds, Android displayed the *previous run's task snapshot*, so the app appeared to open frozen on Home, flash the splash, then start. Sign-in is now started, given an 800 ms head start (`_sessionWarmupBudget`), and left to finish in the background; `uidChangesProvider` delivers the uid when it lands and the Firestore providers rebuild. Anything slow or network-bound belongs behind a provider with a loading state, not in `bootstrap()`. It's branded via the `flutter_native_splash` block in `pubspec.yaml` — regenerate with `fvm dart run flutter_native_splash:create` after any change there, and never hand-edit the generated `LaunchImage.imageset` / `drawable*/` / `styles.xml` files.
 - `core/widgets/app_button.dart` and `app_text_field.dart` were **not** created — the theme's `filledButtonTheme` / `inputDecorationTheme` already produce the design's pill shapes, so wrappers would add indirection with no behavior. Real custom components live there instead: `scripture_card.dart`, `conversation_input.dart`, `section_label.dart`, `state_views.dart`.
 - Fonts come from `google_fonts` (network fetch, then cached). Before release, bundle the EB Garamond and Manrope TTFs so a first launch offline still renders correctly (both are OFL).
 
@@ -211,7 +262,13 @@ users/{uid}                          createdAt, updatedAt, selectedTranslation
 
 Security rules: a user reads/writes only their own data. Never allow cross-UID access. Conversations are sensitive personal data — don't ship conversation content into analytics.
 
-Models: `Bookmark, Reflection, Prayer, Scripture` exist. `Conversation`, `Message`, `UserProfile` are still to come with conversation persistence.
+Models: `Bookmark, Reflection, Prayer, Conversation, Message, Scripture`. `UserProfile` has no model — the user document is written directly by `LibraryDataSource.ensureProfile` and nothing reads it back yet.
+
+**Only user messages are persisted.** The Scripture shown in reply is re-derived on replay, because retrieval is deterministic (same message + same corpus → same passages), so storing it would duplicate derivable data. This changes in Milestone 3: LLM responses are not reproducible, so assistant messages must be persisted then — `MessageRole.assistant` already exists for it.
+
+**Deleting a conversation deletes its messages first, in a batch.** Firestore does not cascade: subcollections outlive a deleted parent, leaving orphaned messages the user can neither see nor remove.
+
+**Conversation titles truncate the user's own words** rather than paraphrasing. The PRD's examples ("Finding direction", "Learning to forgive") are summaries only an LLM can write honestly; until then, truncation never misrepresents what someone said.
 
 **Firestore models are hand-mapped, not `json_serializable`.** A Firestore document is not JSON: timestamps arrive as `Timestamp` and are written as `FieldValue.serverTimestamp()` sentinels, which a generated codec cannot round-trip. `fromDoc`/`toMap`/`newDoc` live on each model in `library_models.dart`. This is a deliberate deviation from the PRD's "use json_serializable for serialization" — `Scripture` still uses it, since it maps plain SQLite rows.
 
